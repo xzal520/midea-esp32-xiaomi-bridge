@@ -273,7 +273,7 @@ def build():
         else:
             args+=['-i',WORK/f'voice-{i:02d}.wav'];vf='[0:v]null';audio='1:a'
         vf+=f",ass=scene-{i:02d}.ass,fade=t=in:st=0:d=0.22,fade=t=out:st={t['duration']-.25:.3f}:d=0.25[v]"
-        vf+=f';[{audio}]adelay=350,apad,aresample=48000[a]'
+        vf+=f';[{audio}]adelay=350|350,apad,aresample=48000[a]'
         args+=['-filter_complex',vf,'-map','[v]','-map','[a]','-t',f"{t['duration']:.3f}",'-c:v','libx264','-preset','veryfast','-crf','21','-threads','4','-pix_fmt','yuv420p','-r',FPS,'-c:a','aac','-b:a','128k','-ac','2','-ar','48000',output]
         run(args);sf.write_text(sig);print(f'RENDER {i+1}/{len(SCENES)} {s["title"]}',flush=True)
     (WORK/'clips.txt').write_text(''.join(f"file 'clip-{i:02d}.mp4'\n" for i in range(len(SCENES))),encoding='utf-8')

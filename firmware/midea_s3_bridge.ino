@@ -92,6 +92,7 @@ static uint32_t webMaxHandleMs=0,homekitMaxPollMs=0;
 static WifiHealth wifiHealth;
 static bool setupApMode = false;
 static bool wifiProvisionApActive = false;
+static bool hasSavedWifiCredentials = false;
 static bool wifiOfflineTimerStarted = false;
 static uint32_t wifiOfflineSince = 0;
 static uint32_t wifiProvisionRetryAt = 0;
@@ -187,7 +188,7 @@ static const char FALLBACK_HTML[] PROGMEM = R"HTML(
 )HTML";
 
 static const char WIFI_PROVISION_HTML[] PROGMEM = R"HTML(
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>配置 Wi-Fi</title><style>body{font:16px system-ui,sans-serif;background:#f2f5f3;color:#172b27;padding:20px}main{max-width:430px;margin:5vh auto;background:#fff;padding:24px;border-radius:14px}input,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin:6px 0 14px;border:1px solid #bdccc5;border-radius:8px}button{background:#126b5b;color:#fff;border:0}label{font-weight:600}</style></head><body><main><h2>连接家庭 Wi-Fi</h2><p>请输入 2.4 GHz Wi-Fi 信息和当前网页密码。保存后设备会重启。</p><form action="/wifi-setup" method="post"><label>Wi-Fi 名称</label><input name="ssid" required maxlength="32" autocomplete="off"><label>Wi-Fi 密码</label><input type="password" name="password" maxlength="64"><label>网页密码</label><input type="password" name="webPassword" required autocomplete="current-password"><button>保存并重启</button></form></main></body></html>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接 Wi-Fi</title><style>body{font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f2f5f3;color:#172b27;padding:20px;margin:0}main{max-width:430px;margin:5vh auto;background:#fff;padding:28px 24px;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.08)}h2{margin-top:0;color:#126b5b}input,button{box-sizing:border-box;width:100%;font:inherit;padding:12px;margin:6px 0 16px;border:1px solid #bdccc5;border-radius:8px}input:focus{outline:none;border-color:#126b5b}button{background:#126b5b;color:#fff;border:0;font-weight:600;cursor:pointer;padding:14px}label{font-weight:600;display:block}small{font-weight:normal;color:#666}</style></head><body><main><h2>连接家庭 Wi-Fi</h2><p style="color:#555;line-height:1.5">请输入 2.4 GHz Wi-Fi 名称和密码。保存后设备会自动连接并重启。</p><form action="/wifi-setup" method="post"><label>Wi-Fi 名称</label><input name="ssid" required maxlength="32" autocomplete="off" placeholder="例如：MyHome_2.4G"><label>Wi-Fi 密码</label><input type="password" name="password" maxlength="64" placeholder="Wi-Fi 密码"><label>网页密码 <small>（出厂默认：123456）</small></label><input type="password" name="webPassword" maxlength="64" placeholder="未修改过可留空或填 123456" autocomplete="current-password"><button type="submit">保存并重启</button></form><div style="text-align:center;margin-top:16px"><a href="/dashboard" style="color:#126b5b;text-decoration:none;font-size:14px">高级控制后台 &raquo;</a></div></main></body></html>
 )HTML";
 
 static String bytesToHex(const uint8_t *data, size_t length) {
@@ -1597,6 +1598,7 @@ static void loadNetworkCredentials() {
       cJSON_IsString(password) && strlen(password->valuestring) <= 64) {
     configuredWifiSsid = ssid->valuestring;
     configuredWifiPassword = password->valuestring;
+    hasSavedWifiCredentials = true;
   }
   cJSON_Delete(json);
 }
@@ -1621,6 +1623,7 @@ static bool saveNetworkCredentials(const char *ssid, const char *password, Strin
   prefs.end();
   if (!written) { message = "网络配置保存失败。"; return false; }
   // Reinitialize HomeSpan's network on reboot while preserving HAP/NVS pairing.
+  hasSavedWifiCredentials = true;
   scheduledRestartAt = millis() + 3000;
   message = "Wi-Fi 设置已保存，ESP32 将重启并连接新网络；请等待蓝牙重新连接。";
   return true;
@@ -1897,24 +1900,29 @@ static void startWebServer() {
   server.on("/device", HTTP_GET, handleRoot);
   server.on("/debug", HTTP_GET, handleRoot);
   server.on("/settings", HTTP_GET, handleRoot);
-  server.on("/wifi-setup", HTTP_POST, []() {
-    if (!wifiProvisionApActive || server.client().localIP()!=WiFi.softAPIP()) {
-      server.send(404, "text/plain; charset=utf-8", "配网页面未启用。"); return;
-    }
-    if (server.arg("webPassword") != webPassword) {
-      server.send(401, "text/plain; charset=utf-8", "网页密码不正确，请返回重试。"); return;
-    }
-    if (scheduledRestartAt || firmwareUpdateActive) {
-      server.send(409, "text/plain; charset=utf-8", "设备正在重启或更新，请稍后重试。"); return;
-    }
-    String message;
-    const String ssid = server.arg("ssid"), password = server.arg("password");
-    if (!server.hasArg("ssid") || !server.hasArg("password") ||
-        !saveNetworkCredentials(ssid.c_str(), password.c_str(), message)) {
-      server.send(400, "text/plain; charset=utf-8", message.length()?message:"请填写 Wi-Fi 名称和密码。"); return;
-    }
-    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta charset=\"utf-8\"><p>Wi-Fi 已保存，设备正在重启。请将手机连接到新网络，再从路由器设备列表查看 ESP32 的地址。</p>");
+  server.on("/wifi-setup", HTTP_POST, []() {
+    if (!wifiProvisionApActive || server.client().localIP() != WiFi.softAPIP()) {
+      server.send(404, "text/plain; charset=utf-8", "页面未启用。"); return;
+    }
+    String inputWebPwd = server.arg("webPassword");
+    if (inputWebPwd.length() == 0 && webPassword == DEFAULT_WEB_PASSWORD) {
+      inputWebPwd = DEFAULT_WEB_PASSWORD;
+    }
+    if (inputWebPwd != webPassword) {
+      server.send(401, "text/plain; charset=utf-8", "网页密码不正确（出厂默认密码为 123456），请返回重试。"); return;
+    }
+    if (scheduledRestartAt || firmwareUpdateActive) {
+      server.send(409, "text/plain; charset=utf-8", "设备正在重启或更新，请稍后重试。"); return;
+    }
+    String message;
+    const String ssid = server.arg("ssid"), password = server.arg("password");
+    if (!server.hasArg("ssid") || !server.hasArg("password") ||
+        !saveNetworkCredentials(ssid.c_str(), password.c_str(), message)) {
+      server.send(400, "text/plain; charset=utf-8", message.length() ? message : "请填写 Wi-Fi 名称和密码。"); return;
+    }
+    server.send(200, "text/html; charset=utf-8", "<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta charset=\"utf-8\"><div style=\"max-width:430px;margin:10vh auto;padding:24px;font-family:sans-serif;line-height:1.6;color:#172b27;background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,0.08)\"><h3 style=\"color:#126b5b;margin-top:0\">Wi-Fi 配置已保存</h3><p>设备正在重启并连接到家庭网络。</p><p>请将手机切回您的家庭 Wi-Fi，并在路由器设备列表中查看 ESP32 的新 IP 地址访问控制后台。</p></div>");
   });
+  server.on("/dashboard", HTTP_GET, handleRoot);
   server.on("/assets/app.css", HTTP_GET, [](){sendWebAsset("text/css; charset=utf-8",WEB_STYLE,"css");});
   server.on("/assets/app.js", HTTP_GET, [](){sendWebAsset("application/javascript; charset=utf-8",WEB_SCRIPT,"js");});
   server.on("/api/log", HTTP_GET, handleLog);
@@ -1977,10 +1985,12 @@ static void serviceWifiProvision(uint32_t now) {
     }
     return;
   }
-  if (!wifiOfflineTimerStarted) { wifiOfflineTimerStarted=true; wifiOfflineSince=now; }
+  if (!wifiOfflineTimerStarted) { wifiOfflineTimerStarted = true; wifiOfflineSince = now; }
+  // 未配网新设备或使用默认 midea 连不上时，等待 10 秒即开应急热点；已配网设备保持 90 秒防抖
+  const uint32_t provisionDelayMs = (!hasSavedWifiCredentials || configuredWifiSsid == "midea") ? 10000 : WIFI_PROVISION_DELAY_MS;
   if (wifiProvisionApActive || firmwareUpdateActive || scheduledRestartAt ||
-      uint32_t(now-wifiOfflineSince)<WIFI_PROVISION_DELAY_MS ||
-      (wifiProvisionRetryAt && int32_t(now-wifiProvisionRetryAt)<0)) return;
+      uint32_t(now - wifiOfflineSince) < provisionDelayMs ||
+      (wifiProvisionRetryAt && int32_t(now - wifiProvisionRetryAt) < 0)) return;
   wifiProvisionRetryAt=now+30000;
   const bool usePassword = FALLBACK_AP_PASSWORD && strlen(FALLBACK_AP_PASSWORD) > 0;
   if (usePassword && (strlen(FALLBACK_AP_PASSWORD) < 8 || strlen(FALLBACK_AP_PASSWORD) > 63)) {
@@ -1988,6 +1998,7 @@ static void serviceWifiProvision(uint32_t now) {
   }
   bool apOk = false;
   if (WiFi.mode(WIFI_AP_STA)) {
+    WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
     apOk = usePassword ? WiFi.softAP("Midea-S3-UART-Setup", FALLBACK_AP_PASSWORD)
                        : WiFi.softAP("Midea-S3-UART-Setup");
   }
@@ -2092,6 +2103,10 @@ static void serviceSerial() {
 }
 
 void setup() {
+  // 开机立即重置为 STA 模式，彻底抑制硬件底层未命名 AP (ESP32_xxxxxx) 广播
+  WiFi.persistent(false);
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_STA);
   Serial.begin(USB_BAUD);
   const esp_reset_reason_t bootResetReason = esp_reset_reason();
   Serial.println();
@@ -2161,7 +2176,7 @@ void setup() {
   // Keep USB serial available for readable HomeSpan pairing diagnostics. The AC
   // UART stream is shown as HEX on the web page, not mixed into this log console.
   homeSpan.setLogLevel(1).setSerialInputDisable(true).setWifiCredentials(configuredWifiSsid.c_str(), configuredWifiPassword.c_str());
-  homeSpan.setHostNameSuffix("").setPortNum(51826).setApSSID("Midea-S3-HomeKit-Setup").setApPassword(FALLBACK_AP_PASSWORD && strlen(FALLBACK_AP_PASSWORD) > 0 ? FALLBACK_AP_PASSWORD : "").enableAutoStartAP();
+  homeSpan.setHostNameSuffix("").setPortNum(51826).setApSSID("Midea-S3-UART-Setup").setApPassword(FALLBACK_AP_PASSWORD && strlen(FALLBACK_AP_PASSWORD) > 0 ? FALLBACK_AP_PASSWORD : "").enableAutoStartAP();
   homeSpan.setPairCallback(onHomeKitPairing);
   homeSpan.setQRID(HOMEKIT_SETUP_ID);
   homeSpan.begin(Category::AirConditioners, "Midea S3 空调", mdnsHostname.c_str(), "Midea S3 UART AC");
