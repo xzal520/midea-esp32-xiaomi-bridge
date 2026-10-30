@@ -272,7 +272,9 @@ def build():
     run(['-i',OUT,'-t','75','-map','0:v:0','-map','0:a:0','-map_chapters','-1','-c','copy','-movflags','+faststart',DEST/'网页与蓝牙操作版-开头预览.mp4'])
     start=next(e['start'] for e in entries if e['title']==WEB_SEGMENTS[1]['title'])
     end=next(e['start']+e['duration'] for e in entries if e['title']==BASE_SCENES[24]['title'])
-    run(['-ss',start,'-i',OUT,'-t',end-start,'-map','0:v:0','-map','0:a:0','-map_chapters','-1','-c:v','libx264',
+    standalone_credit(end-start)
+    run(['-ss',start,'-i',OUT,'-t',end-start,'-map','0:v:0','-map','0:a:0','-map_chapters','-1',
+         '-vf','ass=ble-standalone-credit.ass','-c:v','libx264',
          '-preset','veryfast','-crf','21','-threads','4','-c:a','aac','-b:a','192k','-movflags','+faststart',DEST/'蓝牙配网操作-单独片段.mp4'])
     OUT.with_suffix('.mp4.sha256').write_text(hashlib.sha256(OUT.read_bytes()).hexdigest()+'  '+OUT.name+'\n',encoding='utf-8')
     (DEST/'网页与蓝牙操作版-制作说明.md').write_text(
@@ -285,5 +287,10 @@ def build():
         '- 人声按相同延迟拼接为单声道母版后统一转成立体声，避免左右声道错位。\n'
         '- 重新制作：`website_segments.py` 生成经授权的新增配音，`make_website_edition.py` 合成视频。\n',encoding='utf-8')
     print('COMPLETE '+str(OUT),flush=True)
+
+def standalone_credit(seconds):
+    text='''[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Credit,Microsoft YaHei,19,&H00CEE3D4,&H00CEE3D4,&H00212A22,&H00000000,0,0,0,0,100,100,0,0,1,0,0,8,70,70,946,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n'''
+    text+=f'Dialogue: 0,{R.timestamp(max(0,seconds-7),True)},{R.timestamp(seconds,True)},Credit,,0,0,0,,Music: Clear Air — Kevin MacLeod (incompetech.com) · CC BY 4.0\\Nhttps://creativecommons.org/licenses/by/4.0/\n'
+    (WORK/'ble-standalone-credit.ass').write_text(text,encoding='utf-8-sig')
 
 if __name__=='__main__':build()
