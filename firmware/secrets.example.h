@@ -4,7 +4,7 @@
 static const char *WIFI_SSID = "midea";
 static const char *WIFI_PASSWORD = "123456";
 static const char *DEFAULT_WEB_PASSWORD = "123456";
-static const char *FALLBACK_AP_PASSWORD = "midea8266";
+static const char *FALLBACK_AP_PASSWORD = "";
 // Use a unique HomeKit code and setup ID for this S3 device.
 static const char *HOMEKIT_SETUP_CODE = "32165487";
 static const char *HOMEKIT_SETUP_ID = "S3EX";
