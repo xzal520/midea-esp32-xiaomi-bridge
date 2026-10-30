@@ -1,0 +1,21 @@
+# Toolchains, generated firmware, logs and caches
+/build/
+/dist/
+/logs/
+.tmp/
+__pycache__/
+*.py[cod]
+*.log
+*.bin
+*.elf
+*.map
+*.o
+*.exe
+*.bak
+*.zip
+*.bat
+
+# Editor metadata
+.vscode/
+.idea/
+.DS_Store
